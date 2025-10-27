@@ -1,0 +1,38 @@
+{
+    "manifest_version": 2,
+    "name": "Hextension",
+    "version": "1.4",
+    "description": "Bloquea los juegos ocultos de Google.",
+    "applications": {
+        "gecko": {
+            "id": "hextension@yonderi"
+        }
+    },
+    "permissions": [
+        "storage",
+        "webRequest",
+        "webRequestBlocking",
+        "*://www.google.com/*",
+        "*://g.co/*"
+    ],
+    "background": {
+        "scripts": [
+            "background.js"
+        ],
+        "persistent": false
+    },
+    "browser_action": {
+        "default_popup": "popup.html",
+        "default_title": "Hextension"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "*://www.google.com/*"
+            ],
+            "js": [
+                "content.js"
+            ]
+        }
+    ]
+}

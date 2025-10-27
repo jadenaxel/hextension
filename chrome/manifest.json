@@ -1,0 +1,43 @@
+{
+    "manifest_version": 3,
+    "name": "Hextension",
+    "version": "1.2",
+    "description": "Bloquea los juegos ocultos de Google (Pac-Man, Dinosaurio, Snake, etc.)",
+    "permissions": [
+        "declarativeNetRequest",
+        "declarativeNetRequestWithHostAccess",
+        "storage"
+    ],
+    "host_permissions": [
+        "*://www.google.com/*",
+        "*://g.co/*"
+    ],
+    "background": {
+        "service_worker": "background.js"
+    },
+    "action": {
+        "default_popup": "popup.html",
+        "default_title": "Hextension"
+    },
+    "declarative_net_request": {
+        "rule_resources": [
+            {
+                "id": "ruleset_1",
+                "enabled": true,
+                "path": "rules.json"
+            }
+        ]
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "*://www.google.com/*",
+                "*://g.co/*"
+            ],
+            "js": [
+                "content.js"
+            ],
+            "run_at": "document_idle"
+        }
+    ]
+}
