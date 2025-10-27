@@ -142,7 +142,12 @@ chrome.storage.sync.get(["enabled"], (res) => {
     ];
 
     for (const word of forbiddenWords) {
-        if (document.body.innerText.toLowerCase().includes(word)) {
+        if (
+            document
+                .querySelectorAll("textarea")[0]
+                .innerHTML.toLowerCase()
+                .includes(word)
+        ) {
             document.body.innerHTML = innerHTML(word);
             break;
         }

@@ -146,7 +146,7 @@ browser.storage.sync.get("enabled").then((res) => {
             document
                 .querySelectorAll("textarea")[0]
                 .innerHTML.toLowerCase()
-                .includes("pacman")
+                .includes(word)
         ) {
             document.body.innerHTML = innerHTML(word);
             break;
