@@ -10,32 +10,25 @@
     ],
     "host_permissions": [
         "*://www.google.com/*",
-        "*://g.co/*"
+        "*://g.co/*",
+        "http://localhost:3000/*"
     ],
     "background": {
-        "service_worker": "background.js"
+        "service_worker": "js/background.js"
     },
     "action": {
         "default_popup": "popup.html",
         "default_title": "Hextension"
     },
-    "declarative_net_request": {
-        "rule_resources": [
-            {
-                "id": "ruleset_1",
-                "enabled": true,
-                "path": "rules.json"
-            }
-        ]
-    },
     "content_scripts": [
         {
             "matches": [
                 "*://www.google.com/*",
-                "*://g.co/*"
+                "*://g.co/*",
+                "http://localhost:3000/*"
             ],
             "js": [
-                "content.js"
+                "js/content.js"
             ],
             "run_at": "document_idle"
         }

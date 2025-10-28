@@ -13,7 +13,8 @@
         "webRequest",
         "webRequestBlocking",
         "*://www.google.com/*",
-        "*://g.co/*"
+        "*://localhost:3000/*",
+        "*://127.0.0.1:3000/*"
     ],
     "background": {
         "scripts": [
@@ -28,7 +29,9 @@
     "content_scripts": [
         {
             "matches": [
-                "*://www.google.com/*"
+                "*://www.google.com/*",
+                "*://localhost:3000/*",
+                "*://127.0.0.1:3000/*"
             ],
             "js": [
                 "content.js"

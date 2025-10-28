@@ -129,27 +129,25 @@ body {
 
 browser.storage.sync.get("enabled").then((res) => {
     const enabled = res.enabled ?? true;
-    if (!enabled) return;
+    if (!enabled) return; // Si está apagado, no toques nada
 
-    const forbiddenWords = [
-        "pacman",
-        "dino",
-        "snake",
-        "juegos",
-        "game",
-        "play",
-        "fun",
-    ];
+    browser.runtime
+        .sendMessage({ type: "getForbidden" })
+        .then((data) => {
+            for (const word of data.words) {
+                const regex = new RegExp(`(?:^|\\s)${word}(?:$|\\s)`, "i");
 
-    for (const word of forbiddenWords) {
-        if (
-            document
-                .querySelectorAll("textarea")[0]
-                .innerHTML.toLowerCase()
-                .includes(word)
-        ) {
-            document.body.innerHTML = innerHTML(word);
-            break;
-        }
-    }
+                if (
+                    regex.test(
+                        document
+                            .querySelectorAll("textarea")[0]
+                            .innerHTML.toLowerCase()
+                    )
+                ) {
+                    document.body.innerHTML = innerHTML(word);
+                    break;
+                }
+            }
+        })
+        .catch(console.error);
 });

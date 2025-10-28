@@ -1,10 +1,15 @@
 async function updateRules(enabled) {
-    const blockedPatterns = [
-        "google.com/logos/",
-        "google.com/doodles/",
-        "google.com/fnbx",
-        "google.com/fbx",
-    ];
+    const response = await fetch("http://localhost:3000/api/forbidden/urls");
+    const data = await response.json();
+    const forbiddenWords = data.urls;
+
+    // const blockedPatterns = [
+    //     "google.com/logos/",
+    //     "google.com/doodles/",
+    //     "google.com/fnbx",
+    //     "google.com/fbx",
+    //     "instagram.com",
+    // ];
 
     await chrome.declarativeNetRequest.updateDynamicRules({
         removeRuleIds: [1],
@@ -15,7 +20,7 @@ async function updateRules(enabled) {
                       priority: 1,
                       action: { type: "block" },
                       condition: {
-                          regexFilter: blockedPatterns.join("|"),
+                          regexFilter: forbiddenWords.join("|"),
                           resourceTypes: ["main_frame", "sub_frame"],
                       },
                   },

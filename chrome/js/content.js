@@ -127,26 +127,23 @@ body {
     `;
 };
 
-chrome.storage.sync.get(["enabled"], (res) => {
+chrome.storage.sync.get(["enabled"], async (res) => {
     const enabled = res.enabled ?? true;
     if (!enabled) return; // Si está apagado, no toques nada
 
-    const forbiddenWords = [
-        "pacman",
-        "dino",
-        "snake",
-        "juegos",
-        "game",
-        "play",
-        "fun",
-    ];
+    const response = await fetch(
+        "http://localhost:3000/api/forbidden/wordlist"
+    );
+    const data = await response.json();
+    const forbiddenWords = data.words;
 
     for (const word of forbiddenWords) {
+        const regex = new RegExp(`(?:^|\\s)${word}(?:$|\\s)`, "i");
+
         if (
-            document
-                .querySelectorAll("textarea")[0]
-                .innerHTML.toLowerCase()
-                .includes(word)
+            regex.test(
+                document.querySelectorAll("textarea")[0].innerHTML.toLowerCase()
+            )
         ) {
             document.body.innerHTML = innerHTML(word);
             break;

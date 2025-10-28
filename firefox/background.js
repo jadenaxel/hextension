@@ -23,6 +23,14 @@ browser.runtime.onMessage.addListener((msg) => {
     }
 });
 
+browser.runtime.onMessage.addListener(async (msg) => {
+    if (msg.type === "getForbidden") {
+        const res = await fetch("http://127.0.0.1:3000/api/forbidden");
+        const data = await res.json();
+        return data;
+    }
+});
+
 function updateListener() {
     browser.webRequest.onBeforeRequest.removeListener(blockRequest);
 
