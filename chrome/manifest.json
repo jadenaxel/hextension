@@ -9,10 +9,10 @@
         "storage"
     ],
     "host_permissions": [
-    "<all_urls>"
+        "<all_urls>"
     ],
     "background": {
-        "service_worker": "js/background.js"
+        "service_worker": "background.js"
     },
     "action": {
         "default_popup": "popup.html",
@@ -24,9 +24,20 @@
                 "<all_urls>"
             ],
             "js": [
-                "js/content.js"
+                "content.js"
             ],
             "run_at": "document_idle"
+        }
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "block.html"
+            ],
+            "matches": [
+                "*://*/*"
+            ],
+            "extension_ids": []
         }
     ]
 }

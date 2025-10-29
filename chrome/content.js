@@ -132,20 +132,66 @@ chrome.storage.sync.get(["enabled"], async (res) => {
     const enabled = res.enabled ?? true;
     if (!enabled) return; // Si está apagado, no toques nada
 
-    const response = await fetch(
-        "http://localhost:3000/api/forbidden/wordlist"
-    );
-    const data = await response.json();
-    const forbiddenWords = data.words;
+    const CACHE_KEY = "forbiddenWordsCache";
+    const CACHE_TIME_KEY = "forbiddenWordsTimestamp";
+    const now = Date.now();
+    const lastUpdate = localStorage.getItem(CACHE_TIME_KEY);
+    let forbiddenWords = [];
+
+    // Si hay datos y no han pasado más de 2 minutos, usa cache
+    if (lastUpdate && now - Number(lastUpdate) < 2 * 60 * 1000) {
+        const cached = localStorage.getItem(CACHE_KEY);
+        if (cached) {
+            try {
+                forbiddenWords = JSON.parse(cached);
+            } catch {
+                forbiddenWords = [];
+            }
+        }
+    }
+
+    // Si no hay cache válido, consulta la API
+    if (forbiddenWords.length === 0) {
+        try {
+            const response = await fetch("http://localhost:3000/api/forbidden/wordlist", { cache: "no-store" });
+            if (!response.ok) throw new Error(`API ${response.status} ${response.statusText}`);
+            const data = await response.json();
+            forbiddenWords = data.words || [];
+            // guarda cache y timestamp
+            localStorage.setItem(CACHE_KEY, JSON.stringify(forbiddenWords));
+            localStorage.setItem(CACHE_TIME_KEY, now.toString());
+        } catch (err) {
+            console.error("Error al obtener la lista desde API, usando fallback de localStorage:", err);
+            // Si falla la petición, intenta usar cualquier cache disponible aunque esté vencida
+            const cached = localStorage.getItem(CACHE_KEY);
+            if (cached) {
+                try {
+                    forbiddenWords = JSON.parse(cached);
+                } catch (e) {
+                    console.error("Cache corrupto:", e);
+                    forbiddenWords = [];
+                }
+            } else {
+                // No hay cache: dejamos forbiddenWords vacío para que la extensión siga sin romperse
+                forbiddenWords = [];
+            }
+        }
+    }
+
+    // Si no hay textarea, buscamos texto en el body para evitar exceptions
+    let textToCheck = "";
+    const textareas = document.querySelectorAll("textarea");
+    if (textareas && textareas.length > 0) {
+        const ta = textareas[0];
+        textToCheck = (ta.value || ta.innerText || ta.innerHTML || "").toLowerCase();
+    } else {
+        textToCheck = (document.body && (document.body.innerText || document.body.textContent) || "").toLowerCase();
+    }
 
     for (const word of forbiddenWords) {
         const regex = new RegExp(`(?:^|\\s)${word}(?:$|\\s)`, "i");
 
-        if (
-            regex.test(
-                document.querySelectorAll("textarea")[0].innerHTML.toLowerCase()
-            )
-        ) {
+        if (regex.test(textToCheck)) {
             window.document.title = EXTENSION_NAME;
             document.body.innerHTML = InnerHTML(word);
             break;

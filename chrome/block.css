@@ -1,0 +1,86 @@
+body {
+    font-family: Arial, sans-serif;
+    background: #f4f4f4;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    height: 100dvh;
+}
+
+.card {
+    max-width: 600px;
+    background: #ffffff;
+    margin: 0 auto;
+    padding: 30px 35px;
+    border-radius: 6px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    color: #333;
+}
+
+.header {
+    background: #eb0029;
+    padding: 10px 20px;
+    margin: -30px -35px 20px -35px;
+}
+
+.brand {
+    font-size: 22px;
+    font-weight: bold;
+    color: #fff;
+    text-align: center;
+}
+
+.title {
+    margin: 10px 0 15px;
+    font-size: 22px;
+    font-weight: bold;
+    color: #222;
+}
+
+.message {
+    line-height: 1.6;
+}
+
+.info-box {
+    background: #efefef;
+    padding: 15px;
+    border-radius: 5px;
+    margin: 20px 0;
+    display: flex;
+    align-items: center;
+}
+
+.info-box p {
+    font-weight: bold;
+}
+
+.info-box span {
+    font-weight: lighter !important;
+}
+
+.footer-text {
+    font-size: 14px;
+    color: #555;
+}
+
+.footer-text span {
+    font-weight: bold;
+}
+
+.review-link {
+    display: inline-block;
+    margin-top: 10px;
+    font-size: 14px;
+    text-decoration: none;
+    color: #0066cc;
+    border-bottom: 1px solid transparent;
+    transition: 0.2s ease-in-out;
+}
+
+.review-link:hover {
+    color: #004999;
+    border-bottom: 1px solid #004999;
+}
