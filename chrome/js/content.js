@@ -1,4 +1,6 @@
-const innerHTML = (word) => {
+const EXTENSION_NAME = "Hired Experts Search Policy Network";
+
+const InnerHTML = (word) => {
     return `
         <!DOCTYPE html>
 <html lang="en">
@@ -6,7 +8,6 @@ const innerHTML = (word) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Access Blocked</title>
     <style>
     
 body {
@@ -101,7 +102,7 @@ body {
 
     <div class="card">
         <div class="header">
-            <h1 class="brand">Hired Experts Search Policy Network</h1>
+            <h1 class="brand">${EXTENSION_NAME}</h1>
         </div>
 
         <h2 class="title">Intrusion Prevention - Access Blocked</h2>
@@ -145,7 +146,8 @@ chrome.storage.sync.get(["enabled"], async (res) => {
                 document.querySelectorAll("textarea")[0].innerHTML.toLowerCase()
             )
         ) {
-            document.body.innerHTML = innerHTML(word);
+            window.document.title = EXTENSION_NAME;
+            document.body.innerHTML = InnerHTML(word);
             break;
         }
     }

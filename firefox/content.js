@@ -1,3 +1,5 @@
+const EXTENSION_NAME = "Hired Experts Search Policy Network";
+
 const innerHTML = (word) => {
     return `
         <!DOCTYPE html>
@@ -136,14 +138,10 @@ browser.storage.sync.get("enabled").then((res) => {
         .then((data) => {
             for (const word of data.words) {
                 const regex = new RegExp(`(?:^|\\s)${word}(?:$|\\s)`, "i");
+                const textarea = document.querySelector("textarea");
 
-                if (
-                    regex.test(
-                        document
-                            .querySelectorAll("textarea")[0]
-                            .innerHTML.toLowerCase()
-                    )
-                ) {
+                if (textarea && regex.test(textarea.value.toLowerCase())) {
+                    window.document.title = EXTENSION_NAME;
                     document.body.innerHTML = innerHTML(word);
                     break;
                 }

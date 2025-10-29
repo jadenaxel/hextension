@@ -1,7 +1,7 @@
 {
     "manifest_version": 2,
     "name": "Hextension",
-    "version": "1.4",
+    "version": "0.0",
     "description": "Bloquea los juegos ocultos de Google.",
     "applications": {
         "gecko": {
@@ -29,9 +29,7 @@
     "content_scripts": [
         {
             "matches": [
-                "*://www.google.com/*",
-                "*://localhost:3000/*",
-                "*://127.0.0.1:3000/*"
+                "<all_urls>"
             ],
             "js": [
                 "content.js"
