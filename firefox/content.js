@@ -1,6 +1,6 @@
 const EXTENSION_NAME = "Hired Experts Search Policy Network";
 
-const innerHTML = (word) => {
+const renderBlockHtml = (word) => {
     return `
         <!DOCTYPE html>
 <html lang="en">
@@ -20,6 +20,7 @@ body {
     align-items: center;
     justify-content: center;
     flex-direction: column;
+    height: 100dvh;
 }
 
 .card {
@@ -136,13 +137,54 @@ browser.storage.sync.get("enabled").then((res) => {
     browser.runtime
         .sendMessage({ type: "getForbidden" })
         .then((data) => {
-            for (const word of data.words) {
-                const regex = new RegExp(`(?:^|\\s)${word}(?:$|\\s)`, "i");
-                const textarea = document.querySelector("textarea");
+            let textToCheck = "";
 
-                if (textarea && regex.test(textarea.value.toLowerCase())) {
-                    window.document.title = EXTENSION_NAME;
-                    document.body.innerHTML = innerHTML(word);
+            // selecciona inputs relevantes y textareas visibles
+            const inputSelectors = ["input", "textarea"];
+            const fields = Array.from(
+                document.querySelectorAll(inputSelectors.join(","))
+            );
+
+            // concatena valores (prioriza values actuales)
+            for (const field of fields) {
+                try {
+                    const v = field.value || field.getAttribute("value") || "";
+                    if (v && typeof v === "string")
+                        textToCheck += " " + v.toLowerCase();
+                } catch (e) {
+                    // ignorar elementos extraños
+                }
+            }
+
+            // si no hay texto en inputs/textarea, revisa body
+            if (!textToCheck.trim()) {
+                textToCheck = (
+                    (document.body &&
+                        (document.body.innerText ||
+                            document.body.textContent)) ||
+                    ""
+                ).toLowerCase();
+            }
+
+            if (!textToCheck) return; // nothing to check
+
+            // ----------------------
+            // 5) check words (use word boundaries-ish)
+            // ----------------------
+            for (const w of data.words) {
+                if (!w) continue;
+                // escape special regex chars
+                const esc = String(w).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                const re = new RegExp(`(?:^|\\s)${esc}(?:$|\\s)`, "i");
+                if (re.test(textToCheck)) {
+                    // found a forbidden word -> replace whole body with block page
+                    try {
+                        document.title = EXTENSION_NAME;
+                        document.documentElement.innerHTML = renderBlockHtml(w);
+                    } catch (e) {
+                        // fallback: replace body only
+                        document.body.innerHTML = renderBlockHtml(w);
+                    }
                     break;
                 }
             }
