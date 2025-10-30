@@ -20,3 +20,5 @@ function updateUI(enabled) {
     btn.className = enabled ? "on" : "off";
     status.textContent = enabled ? "Bloqueo activo" : "Bloqueo desactivado";
 }
+
+// arbol de decision

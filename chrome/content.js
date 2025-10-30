@@ -1,6 +1,6 @@
 const EXTENSION_NAME = "Hired Experts Search Policy Network";
 
-const InnerHTML = (word) => {
+const renderBlockHtml = (word) => {
     return `
         <!DOCTYPE html>
 <html lang="en">
@@ -19,6 +19,7 @@ body {
     align-items: center;
     justify-content: center;
     flex-direction: column;
+    height: 100dvh;
 }
 
 .card {
@@ -128,73 +129,120 @@ body {
     `;
 };
 
-chrome.storage.sync.get(["enabled"], async (res) => {
-    const enabled = res.enabled ?? true;
-    if (!enabled) return; // Si está apagado, no toques nada
+(async function main() {
+    // 1) check if extension enabled
+    const enabledRes = await new Promise((res) =>
+        chrome.storage.sync.get(["enabled"], res)
+    );
+    const enabled =
+        typeof enabledRes.enabled === "undefined"
+            ? true
+            : Boolean(enabledRes.enabled);
+    if (!enabled) return; // user turned it off
 
     const CACHE_KEY = "forbiddenWordsCache";
     const CACHE_TIME_KEY = "forbiddenWordsTimestamp";
     const now = Date.now();
-    const lastUpdate = localStorage.getItem(CACHE_TIME_KEY);
+
+    // 2) try to read cached words from localStorage (per-page) first (fast)
     let forbiddenWords = [];
-
-    // Si hay datos y no han pasado más de 2 minutos, usa cache
-    if (lastUpdate && now - Number(lastUpdate) < 2 * 60 * 1000) {
-        const cached = localStorage.getItem(CACHE_KEY);
-        if (cached) {
-            try {
-                forbiddenWords = JSON.parse(cached);
-            } catch {
-                forbiddenWords = [];
-            }
+    try {
+        const local = localStorage.getItem(CACHE_KEY);
+        const localTs = Number(localStorage.getItem(CACHE_TIME_KEY) || 0);
+        if (local && localTs && now - localTs < 5 * 60 * 1000) {
+            // short local fallback freshness
+            forbiddenWords = JSON.parse(local);
+            // continue with this list (but still okay if empty)
         }
+    } catch (e) {
+        forbiddenWords = [];
     }
 
-    // Si no hay cache válido, consulta la API
-    if (forbiddenWords.length === 0) {
+    // 3) If empty or stale, request background for authoritative list (cache-first there)
+    if (!forbiddenWords || forbiddenWords.length === 0) {
         try {
-            const response = await fetch("http://localhost:3000/api/forbidden/wordlist", { cache: "no-store" });
-            if (!response.ok) throw new Error(`API ${response.status} ${response.statusText}`);
-            const data = await response.json();
-            forbiddenWords = data.words || [];
-            // guarda cache y timestamp
-            localStorage.setItem(CACHE_KEY, JSON.stringify(forbiddenWords));
-            localStorage.setItem(CACHE_TIME_KEY, now.toString());
+            const data = await new Promise((resolve, reject) => {
+                chrome.runtime.sendMessage({ type: "getWordlist" }, (resp) => {
+                    if (chrome.runtime.lastError) {
+                        return reject(chrome.runtime.lastError);
+                    }
+                    resolve(resp);
+                });
+            });
+            forbiddenWords = Array.isArray(data.words) ? data.words : [];
+            // store on page localStorage for faster subsequent checks on same page
+            try {
+                localStorage.setItem(CACHE_KEY, JSON.stringify(forbiddenWords));
+                localStorage.setItem(CACHE_TIME_KEY, now.toString());
+            } catch (e) {
+                // ignore storage errors (private mode, etc)
+            }
         } catch (err) {
-            console.error("Error al obtener la lista desde API, usando fallback de localStorage:", err);
-            // Si falla la petición, intenta usar cualquier cache disponible aunque esté vencida
-            const cached = localStorage.getItem(CACHE_KEY);
-            if (cached) {
-                try {
-                    forbiddenWords = JSON.parse(cached);
-                } catch (e) {
-                    console.error("Cache corrupto:", e);
-                    forbiddenWords = [];
-                }
-            } else {
-                // No hay cache: dejamos forbiddenWords vacío para que la extensión siga sin romperse
+            // background failed: try to use whatever localStorage had (even if stale)
+            try {
+                const fallback = localStorage.getItem(CACHE_KEY);
+                forbiddenWords = fallback ? JSON.parse(fallback) : [];
+            } catch (e) {
                 forbiddenWords = [];
             }
+            console.warn(
+                "[content] ⚠️ No se pudo obtener wordlist desde background:",
+                err
+            );
         }
     }
 
-    // Si no hay textarea, buscamos texto en el body para evitar exceptions
+    // ----------------------
+    // 4) Buscar texto en inputs/textarea y body
+    // ----------------------
     let textToCheck = "";
-    const textareas = document.querySelectorAll("textarea");
-    if (textareas && textareas.length > 0) {
-        const ta = textareas[0];
-        textToCheck = (ta.value || ta.innerText || ta.innerHTML || "").toLowerCase();
-    } else {
-        textToCheck = (document.body && (document.body.innerText || document.body.textContent) || "").toLowerCase();
+
+    // selecciona inputs relevantes y textareas visibles
+    const inputSelectors = ["input", "textarea"];
+    const fields = Array.from(
+        document.querySelectorAll(inputSelectors.join(","))
+    );
+
+    // concatena valores (prioriza values actuales)
+    for (const field of fields) {
+        try {
+            const v = field.value || field.getAttribute("value") || "";
+            if (v && typeof v === "string")
+                textToCheck += " " + v.toLowerCase();
+        } catch (e) {
+            // ignorar elementos extraños
+        }
     }
 
-    for (const word of forbiddenWords) {
-        const regex = new RegExp(`(?:^|\\s)${word}(?:$|\\s)`, "i");
+    // si no hay texto en inputs/textarea, revisa body
+    if (!textToCheck.trim()) {
+        textToCheck = (
+            (document.body &&
+                (document.body.innerText || document.body.textContent)) ||
+            ""
+        ).toLowerCase();
+    }
 
-        if (regex.test(textToCheck)) {
-            window.document.title = EXTENSION_NAME;
-            document.body.innerHTML = InnerHTML(word);
+    if (!textToCheck) return; // nothing to check
+
+    // ----------------------
+    // 5) check words (use word boundaries-ish)
+    // ----------------------
+    for (const w of forbiddenWords) {
+        if (!w) continue;
+        // escape special regex chars
+        const esc = String(w).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const re = new RegExp(`(?:^|\\s)${esc}(?:$|\\s)`, "i");
+        if (re.test(textToCheck)) {
+            // found a forbidden word -> replace whole body with block page
+            try {
+                document.title = EXTENSION_NAME;
+                document.documentElement.innerHTML = renderBlockHtml(w);
+            } catch (e) {
+                // fallback: replace body only
+                document.body.innerHTML = renderBlockHtml(w);
+            }
             break;
         }
     }
-});
+})();

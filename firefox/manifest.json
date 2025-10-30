@@ -1,28 +1,27 @@
 {
-    "manifest_version": 2,
+    "manifest_version": 3,
     "name": "Hextension",
     "version": "0.0",
-    "description": "Bloquea los juegos ocultos de Google.",
-    "applications": {
+    "description": "Bloquea los juegos ocultos de Google (Pac-Man, Dinosaurio, Snake, etc.)",
+    "browser_specific_settings": {
         "gecko": {
-            "id": "hextension@yonderi"
+            "id": "hex@extension"
         }
     },
     "permissions": [
-        "storage",
-        "webRequest",
-        "webRequestBlocking",
-        "*://www.google.com/*",
-        "*://localhost:3000/*",
-        "*://127.0.0.1:3000/*"
+        "declarativeNetRequest",
+        "declarativeNetRequestWithHostAccess",
+        "storage"
+    ],
+    "host_permissions": [
+        "<all_urls>"
     ],
     "background": {
         "scripts": [
             "background.js"
-        ],
-        "persistent": false
+        ]
     },
-    "browser_action": {
+    "action": {
         "default_popup": "popup.html",
         "default_title": "Hextension"
     },
@@ -33,7 +32,19 @@
             ],
             "js": [
                 "content.js"
-            ]
+            ],
+            "run_at": "document_idle"
+        }
+    ],
+    "web_accessible_resources": [
+        {
+            "resources": [
+                "block.html"
+            ],
+            "matches": [
+                "*://*/*"
+            ],
+            "extension_ids": []
         }
     ]
 }

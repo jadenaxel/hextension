@@ -1,118 +1,164 @@
-function toUrlFilterPattern(input) {
-    let raw = (input || "").trim();
+// Hextension – Chrome MV3
+// Cache-first; refresco con chrome.alarms; DNR limpio; logs visibles en el SW.
 
-    // Si no trae esquema, asumimos https para poder parsear
-    if (!/^https?:\/\//i.test(raw)) raw = "https://" + raw;
+const CACHE_DURATION_MINUTES = 1; // <-- tu intervalo
+const URLS_API = "http://localhost:3000/api/forbidden/urls";
+const WORDS_API = "http://localhost:3000/api/forbidden/wordlist";
+
+const URL_CACHE_KEY = "forbiddenUrlsCache";
+const URL_CACHE_TIME = "forbiddenUrlsTimestamp";
+const WORD_CACHE_KEY = "forbiddenWordlist";
+const WORD_CACHE_TIME = "forbiddenWordlistTimestamp";
+
+// ----- helpers -----
+const getL = (k) => new Promise((r) => chrome.storage.local.get(k, r));
+const setL = (o) => new Promise((r) => chrome.storage.local.set(o, r));
+const getS = (k) => new Promise((r) => chrome.storage.sync.get(k, r));
+const now = () => Date.now();
+const ms = (m) => m * 60 * 1000;
+const fresh = (t, m = CACHE_DURATION_MINUTES) => t && now() - t < ms(m);
+
+const log = (...a) => console.log("[SW]", ...a);
+
+// DNR regex
+function buildRegexForDNR(url) {
+    const clean = String(url || "")
+        .replace(/^https?:\/\//i, "")
+        .replace(/^www\./i, "")
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return `https?:\\/\\/([a-z0-9.-]+\\.)?${clean}`;
+}
+
+// ----- cache-first fetch -----
+async function getUrls() {
+    const s = await getL([URL_CACHE_KEY, URL_CACHE_TIME]);
+    const cached = Array.isArray(s[URL_CACHE_KEY]) ? s[URL_CACHE_KEY] : [];
+    const ts = s[URL_CACHE_TIME] || 0;
+
+    if (cached.length && fresh(ts)) {
+        log("URLs desde cache", cached.length);
+        return cached;
+    }
 
     try {
-        const { hostname, pathname } = new URL(raw);
-
-        // Quita "www." para no duplicar y usa wildcard de subdominio
-        const baseHost = hostname.replace(/^www\./i, "");
-        const hostPart = `*.${baseHost}`;
-
-        // Normaliza path
-        let pathPart = pathname || "/";
-        pathPart = pathPart.replace(/\/+$/, "");
-        if (pathPart === "") pathPart = "/";
-        if (!pathPart.endsWith("/*")) pathPart += "/*";
-
-        return `*://${hostPart}${pathPart}`;
+        const res = await fetch(URLS_API, { cache: "no-store" });
+        if (!res.ok) throw new Error(`API ${res.status}`);
+        const j = await res.json();
+        const urls = Array.isArray(j.urls) ? j.urls : [];
+        await setL({ [URL_CACHE_KEY]: urls, [URL_CACHE_TIME]: now() });
+        log("URLs refrescadas desde API", urls.length);
+        return urls;
     } catch (e) {
-        // Si no se puede parsear, bloquea todo el host
-        const host = input
-            .replace(/^https?:\/\//i, "")
-            .replace(/\/.*$/, "")
-            .replace(/^www\./i, "");
-        return `*://*.${host}/*`;
+        log("API URLs caída, uso cache:", e.message);
+        return cached;
     }
 }
 
-async function updateRules(enabled) {
-    const CACHE_KEY = "forbiddenUrlsCache";
-    const CACHE_TIME_KEY = "forbiddenUrlsTimestamp";
-    const now = Date.now();
-    let urlsData = [];
-    let lastUpdate = 0;
+async function getWords() {
+    const s = await getL([WORD_CACHE_KEY, WORD_CACHE_TIME]);
+    const cached = Array.isArray(s[WORD_CACHE_KEY]) ? s[WORD_CACHE_KEY] : [];
+    const ts = s[WORD_CACHE_TIME] || 0;
+
+    if (cached.length && fresh(ts)) {
+        log("Wordlist desde cache", cached.length);
+        return cached;
+    }
 
     try {
-        // Obtener cache local (si existe)
-        const stored = await new Promise((resolve) =>
-            chrome.storage.local.get([CACHE_KEY, CACHE_TIME_KEY], resolve)
-        );
-        if (stored[CACHE_TIME_KEY]) lastUpdate = stored[CACHE_TIME_KEY];
-
-        // Intentar cargar desde API
-        let apiSuccess = false;
-        try {
-            const response = await fetch("http://localhost:3000/api/forbidden/urls", { cache: "no-store" });
-            if (!response.ok) throw new Error(`API ${response.status} ${response.statusText}`);
-            const data = await response.json();
-            urlsData = data.urls || [];
-            await new Promise((resolve) =>
-                chrome.storage.local.set({ [CACHE_KEY]: urlsData, [CACHE_TIME_KEY]: now }, resolve)
-            );
-            console.log("✅ Cache actualizado desde API:", urlsData.length);
-            apiSuccess = true;
-        } catch (apiErr) {
-            console.warn("⚠️ No se pudo acceder a la API, usando cache local:", apiErr.message);
-        }
-
-        // Si la API falló o devolvió vacío, usar el cache local
-        if (!apiSuccess || urlsData.length === 0) {
-            if (stored[CACHE_KEY]) {
-                urlsData = stored[CACHE_KEY];
-                console.log("📦 Usando datos almacenados en cache local:", urlsData.length);
-            } else {
-                console.warn("❌ No hay cache local disponible.");
-                urlsData = [];
-            }
-        }
-
-        // Crear reglas
-        const patterns = (urlsData || []).map((url) => {
-            const clean = url
-                .replace(/^https?:\/\//, "")
-                .replace(/^www\./, "")
-                .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            return `https?:\\/\\/([a-z0-9.-]+\\.)?${clean}`;
-        });
-
-        const existing = await chrome.declarativeNetRequest.getDynamicRules();
-        const removeIds = existing.map((r) => r.id);
-
-        const addRules = enabled
-            ? patterns.map((regex, idx) => ({
-                  id: idx + 1,
-                  priority: 1,
-                  action: {
-                      type: "redirect",
-                      redirect: { url: chrome.runtime.getURL("block.html") },
-                  },
-                  condition: {
-                      regexFilter: regex,
-                      resourceTypes: ["main_frame", "sub_frame"],
-                  },
-              }))
-            : [];
-
-        await chrome.declarativeNetRequest.updateDynamicRules({
-            removeRuleIds: removeIds,
-            addRules,
-        });
-
-        console.log("🚫 Reglas de bloqueo aplicadas:", patterns.length);
-    } catch (err) {
-        console.error("updateRules error:", err);
+        const res = await fetch(WORDS_API, { cache: "no-store" });
+        if (!res.ok) throw new Error(`API ${res.status}`);
+        const j = await res.json();
+        const words = Array.isArray(j.words) ? j.words : [];
+        await setL({ [WORD_CACHE_KEY]: words, [WORD_CACHE_TIME]: now() });
+        log("Wordlist refrescada desde API", words.length);
+        return words;
+    } catch (e) {
+        log("API words caída, uso cache:", e.message);
+        return cached;
     }
 }
 
-// Escucha cambios del interruptor en popup
-chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === "toggle") updateRules(msg.enabled);
+// ----- DNR -----
+async function applyDNR(enabled, urls) {
+    // limpia
+    const existing = await chrome.declarativeNetRequest.getDynamicRules();
+    const removeRuleIds = existing.map((r) => r.id);
+    if (removeRuleIds.length) {
+        await chrome.declarativeNetRequest.updateDynamicRules({
+            removeRuleIds,
+            addRules: [],
+        });
+        log("Eliminadas", removeRuleIds.length, "reglas");
+    }
+
+    if (!enabled) {
+        log("Bloqueo desactivado");
+        return;
+    }
+
+    const addRules = urls.map((u, i) => ({
+        id: i + 1,
+        priority: 1,
+        action: {
+            type: "redirect",
+            redirect: { url: chrome.runtime.getURL("block.html") },
+        },
+        condition: {
+            regexFilter: buildRegexForDNR(u),
+            resourceTypes: ["main_frame", "sub_frame"],
+        },
+    }));
+
+    if (addRules.length) {
+        await chrome.declarativeNetRequest.updateDynamicRules({ addRules });
+    }
+    log("Aplicadas", addRules.length, "reglas");
+}
+
+// ----- ciclo principal -----
+async function updateAll() {
+    const { enabled = true } = await getS(["enabled"]);
+    const urls = await getUrls(); // cache-first
+    await applyDNR(enabled, urls); // aplica reglas
+    await getWords(); // precalienta cache palabras
+}
+
+// ----- eventos que DESPIERTAN el SW -----
+chrome.runtime.onInstalled.addListener(async () => {
+    log("onInstalled");
+    chrome.alarms.create("refreshCache", {
+        periodInMinutes: CACHE_DURATION_MINUTES,
+    });
+    await updateAll();
 });
 
-// Carga estado inicial
-chrome.storage.sync.get(["enabled"], (res) => {
-    updateRules(res.enabled ?? true);
+chrome.runtime.onStartup.addListener(async () => {
+    log("onStartup");
+    chrome.alarms.create("refreshCache", {
+        periodInMinutes: CACHE_DURATION_MINUTES,
+    });
+    await updateAll();
+});
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+    if (alarm.name !== "refreshCache") return;
+    log("Alarm: refreshCache");
+    await updateAll();
+});
+
+// Mensajes (popup / content)
+chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
+    if (!msg || !msg.type) return;
+
+    if (msg.type === "getWordlist") {
+        (async () => {
+            sendResponse({ words: await getWords() });
+        })();
+        return true;
+    }
+    if (msg.type === "toggle") {
+        (async () => {
+            await updateAll();
+        })();
+    }
 });
