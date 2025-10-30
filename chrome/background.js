@@ -1,9 +1,14 @@
-// Hextension – Chrome MV3
-// Cache-first; refresco con chrome.alarms; DNR limpio; logs visibles en el SW.
-
 const CACHE_DURATION_MINUTES = 1; // <-- tu intervalo
-const URLS_API = "http://localhost:3000/api/forbidden/urls";
-const WORDS_API = "http://localhost:3000/api/forbidden/wordlist";
+
+const AllowedCountries = ["US", "DO", "CO", "BO"];
+
+const checkCountry = async () => {
+    const getCountry = await fetch("https://api.country.is/");
+    const result = await getCountry.json();
+    const resultCountry = result.country;
+
+    return AllowedCountries.filter((c) => c === resultCountry);
+};
 
 const URL_CACHE_KEY = "forbiddenUrlsCache";
 const URL_CACHE_TIME = "forbiddenUrlsTimestamp";
@@ -30,7 +35,7 @@ function buildRegexForDNR(url) {
 }
 
 // ----- cache-first fetch -----
-async function getUrls() {
+async function getUrls(URLS_API) {
     const s = await getL([URL_CACHE_KEY, URL_CACHE_TIME]);
     const cached = Array.isArray(s[URL_CACHE_KEY]) ? s[URL_CACHE_KEY] : [];
     const ts = s[URL_CACHE_TIME] || 0;
@@ -54,7 +59,7 @@ async function getUrls() {
     }
 }
 
-async function getWords() {
+async function getWords(WORDS_API) {
     const s = await getL([WORD_CACHE_KEY, WORD_CACHE_TIME]);
     const cached = Array.isArray(s[WORD_CACHE_KEY]) ? s[WORD_CACHE_KEY] : [];
     const ts = s[WORD_CACHE_TIME] || 0;
@@ -118,9 +123,17 @@ async function applyDNR(enabled, urls) {
 // ----- ciclo principal -----
 async function updateAll() {
     const { enabled = true } = await getS(["enabled"]);
-    const urls = await getUrls(); // cache-first
+    const URLS_API = async () => {
+        const country = await checkCountry();
+        return `http://localhost:3000/api/${country}/v1/forbidden/urls`;
+    };
+    const urls = await getUrls(await URLS_API()); // cache-first
     await applyDNR(enabled, urls); // aplica reglas
-    await getWords(); // precalienta cache palabras
+    const WORDS_API = async () => {
+        const country = await checkCountry();
+        return `http://localhost:3000/api/${country}/v1/forbidden/wordlist`;
+    };
+    await getWords(await WORDS_API()); // precalienta cache palabras
 }
 
 // ----- eventos que DESPIERTAN el SW -----
@@ -152,7 +165,11 @@ chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
 
     if (msg.type === "getWordlist") {
         (async () => {
-            sendResponse({ words: await getWords() });
+            const WORDS_API = async () => {
+                const country = await checkCountry();
+                return `http://localhost:3000/api/${country}/v1/forbidden/wordlist`;
+            };
+            sendResponse({ words: await getWords(await WORDS_API()) });
         })();
         return true;
     }
