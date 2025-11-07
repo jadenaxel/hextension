@@ -1,6 +1,6 @@
 const EXTENSION_NAME = "Hired Experts Search Policy Network";
 
-const renderBlockHtml = (word) => {
+const RenderHTML = (word) => {
     return `
         <!DOCTYPE html>
 <html lang="en">
@@ -180,10 +180,10 @@ browser.storage.sync.get("enabled").then((res) => {
                     // found a forbidden word -> replace whole body with block page
                     try {
                         document.title = EXTENSION_NAME;
-                        document.documentElement.innerHTML = renderBlockHtml(w);
+                        document.documentElement.innerHTML = RenderHTML(w);
                     } catch (e) {
                         // fallback: replace body only
-                        document.body.innerHTML = renderBlockHtml(w);
+                        document.body.innerHTML = RenderHTML(w);
                     }
                     break;
                 }

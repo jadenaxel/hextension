@@ -1,48 +1,61 @@
 // ============================
-// Hired Experts Policy Network
-// Compatible con Chrome y Firefox
+// Hired Experts Policy Network (Firefox)
+// Requests por país + cache-first + alarms
 // ============================
 
-// Alias universal para compatibilidad
 const api = typeof browser !== "undefined" ? browser : chrome;
 
-// ===== CONFIGURACIÓN =====
-const CACHE_DURATION_MINUTES = 1; // 🔄 tiempo de actualización automática (en minutos)
-const WORDLIST_URL = "http://127.0.0.1:3000/api/forbidden/wordlist";
-const URLS_URL = "http://127.0.0.1:3000/api/forbidden/urls";
+const API_URL = "http://172.31.1.11:3000";
+const COUNTRY_API = "https://api.country.is/";
+const CACHE_DURATION_MINUTES = 1;
 
-// ===== CLAVES DE CACHE =====
+// Países permitidos; si el API devuelve otro, se usa "US" como fallback
+const AllowedCountries = ["US", "DO", "CO", "BO"];
+
+// ======== Helpers de tiempo/cache ========
+const now = () => Date.now();
+const ms = (m) => m * 60 * 1000;
+const fresh = (t, m = CACHE_DURATION_MINUTES) =>
+    Boolean(t) && now() - t < ms(m);
+const log = (...a) => console.log("[BG]", ...a);
+
+// ======== Storage promisificado ========
+const getL = (k) =>
+    api.storage.local.get.length === 1
+        ? api.storage.local.get(k)
+        : new Promise((r) => api.storage.local.get(k, r));
+
+const setL = (o) =>
+    api.storage.local.set.length === 1
+        ? api.storage.local.set(o)
+        : new Promise((r) => api.storage.local.set(o, r));
+
+const getS = (k) =>
+    api.storage.sync.get.length === 1
+        ? api.storage.sync.get(k)
+        : new Promise((r) => api.storage.sync.get(k, r));
+
+// ======== Claves de cache ========
 const URL_CACHE_KEY = "forbiddenUrlsCache";
 const URL_CACHE_TIME = "forbiddenUrlsTimestamp";
 const WORD_CACHE_KEY = "forbiddenWordlist";
 const WORD_CACHE_TIME = "forbiddenWordlistTimestamp";
 
-// ===== UTILIDADES DE STORAGE (compatibles con ambos navegadores) =====
-const storageLocalGet = (keys) =>
-    api.storage.local.get.length === 1
-        ? api.storage.local.get(keys)
-        : new Promise((resolve) => api.storage.local.get(keys, resolve));
-
-const storageLocalSet = (items) =>
-    api.storage.local.set.length === 1
-        ? api.storage.local.set(items)
-        : new Promise((resolve) => api.storage.local.set(items, resolve));
-
-const storageSyncGet = (keys) =>
-    api.storage.sync.get.length === 1
-        ? api.storage.sync.get(keys)
-        : new Promise((resolve) => api.storage.sync.get(keys, resolve));
-
-// ===== FUNCIONES AUXILIARES =====
-
-// Verifica si la cache sigue dentro del tiempo válido
-function isCacheValid(timestamp) {
-    if (!timestamp) return false;
-    const ageMs = Date.now() - timestamp;
-    return ageMs < CACHE_DURATION_MINUTES * 60 * 1000;
+// ======== País (para construir endpoints v1 por país) ========
+async function checkCountry() {
+    try {
+        const res = await fetch(COUNTRY_API, { cache: "no-store" });
+        if (!res.ok) throw new Error(String(res.status));
+        const data = await res.json();
+        const c = (data && data.country) || "US";
+        return AllowedCountries.includes(c) ? c : "US";
+    } catch (e) {
+        log("No se pudo detectar país, usando US. Motivo:", e.message || e);
+        return "US";
+    }
 }
 
-// Formato de URL para Firefox webRequest
+// ======== Transformador de URLs a patrón webRequest (Firefox) ========
 function toUrlFilterPattern(input) {
     let raw = (input || "").trim();
     if (!raw) return "*://*/*";
@@ -66,63 +79,70 @@ function toUrlFilterPattern(input) {
     }
 }
 
-function buildRegexForDNR(url) {
-    const clean = url
-        .replace(/^https?:\/\//i, "")
-        .replace(/^www\./i, "")
-        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return `https?:\\/\\/([a-z0-9.-]+\\.)?${clean}`;
-}
+// ======== Cache-first: URLs prohibidas ========
+async function getUrls() {
+    const s = await getL([URL_CACHE_KEY, URL_CACHE_TIME]);
+    const cached = Array.isArray(s[URL_CACHE_KEY]) ? s[URL_CACHE_KEY] : [];
+    const ts = s[URL_CACHE_TIME] || 0;
 
-// ===== FETCH Y CACHE DE DATOS =====
-async function getCachedData(apiUrl, cacheKey, cacheTimeKey) {
-    const stored = await storageLocalGet([cacheKey, cacheTimeKey]);
-    const isValid = isCacheValid(stored[cacheTimeKey]);
-
-    if (stored[cacheKey] && stored[cacheKey].length && isValid) {
-        console.log(
-            `📦 Cache válida encontrada (${cacheKey}):`,
-            stored[cacheKey].length
-        );
-        return stored[cacheKey];
+    if (cached.length && fresh(ts)) {
+        log("URLs desde cache:", cached.length);
+        return cached;
     }
 
     try {
-        const res = await fetch(apiUrl, { cache: "no-store" });
-        if (!res.ok) throw new Error(`API ${res.status} ${res.statusText}`);
-        const data = await res.json();
-
-        const payload =
-            cacheKey === URL_CACHE_KEY
-                ? Array.isArray(data.urls)
-                    ? data.urls
-                    : []
-                : Array.isArray(data.words)
-                ? data.words
-                : [];
-
-        await storageLocalSet({
-            [cacheKey]: payload,
-            [cacheTimeKey]: Date.now(),
+        const country = await checkCountry();
+        const res = await fetch(`${API_URL}/api/${country}/v1/forbidden/urls`, {
+            cache: "no-store",
         });
-
-        console.log(
-            `✅ Datos actualizados desde API (${cacheKey}):`,
-            payload.length
-        );
-        return payload;
-    } catch (err) {
-        console.warn(
-            `⚠️ No se pudo acceder a la API (${apiUrl}). Uso cache local.`
-        );
-        return stored[cacheKey] || [];
+        if (!res.ok) throw new Error(`API URLs ${res.status}`);
+        const j = await res.json();
+        const urls = Array.isArray(j.urls) ? j.urls : [];
+        await setL({ [URL_CACHE_KEY]: urls, [URL_CACHE_TIME]: now() });
+        log("URLs refrescadas desde API:", urls.length);
+        return urls;
+    } catch (e) {
+        log("API URLs caída, uso cache. Motivo:", e.message || e);
+        return cached;
     }
 }
 
-// ===== BLOQUEO DE URLS =====
+// ======== Cache-first: Wordlist ========
+async function getWords() {
+    const s = await getL([WORD_CACHE_KEY, WORD_CACHE_TIME]);
+    const cached = Array.isArray(s[WORD_CACHE_KEY]) ? s[WORD_CACHE_KEY] : [];
+    const ts = s[WORD_CACHE_TIME] || 0;
+
+    if (cached.length && fresh(ts)) {
+        log("Wordlist desde cache:", cached.length);
+        return cached;
+    }
+
+    try {
+        const country = await checkCountry();
+        const res = await fetch(
+            `${API_URL}/api/${country}/v1/forbidden/wordlist`,
+            {
+                cache: "no-store",
+            }
+        );
+        if (!res.ok) throw new Error(`API words ${res.status}`);
+        const j = await res.json();
+        const words = Array.isArray(j.words) ? j.words : [];
+        await setL({ [WORD_CACHE_KEY]: words, [WORD_CACHE_TIME]: now() });
+        log("Wordlist refrescada desde API:", words.length);
+        return words;
+    } catch (e) {
+        log("API words caída, uso cache. Motivo:", e.message || e);
+        return cached;
+    }
+}
+
+// ======== Bloqueo en Firefox con webRequest ========
 let ffRequestListener = null;
 
 async function applyFirefoxWebRequest(enabled, urlsData) {
+    // limpiar listener previo
     if (ffRequestListener) {
         try {
             api.webRequest.onBeforeRequest.removeListener(ffRequestListener);
@@ -131,7 +151,7 @@ async function applyFirefoxWebRequest(enabled, urlsData) {
     }
 
     if (!enabled) {
-        console.log("🦊 Bloqueo desactivado en Firefox.");
+        log("Bloqueo desactivado (Firefox)");
         return;
     }
 
@@ -140,100 +160,87 @@ async function applyFirefoxWebRequest(enabled, urlsData) {
         : ["*://*/*"];
 
     ffRequestListener = () => ({
-        redirectUrl: api.runtime.getURL("block.html"),
+        redirectUrl: api.runtime.getURL("privacy.html"),
     });
 
     api.webRequest.onBeforeRequest.addListener(
         ffRequestListener,
-        { urls: urlFilters, types: ["main_frame"] },
+        {
+            urls: urlFilters,
+            types: ["main_frame"],
+        },
         ["blocking"]
     );
 
-    console.log("🦊 webRequest activo (Firefox). URLs:", urlFilters.length);
+    log("webRequest activo (Firefox). Filtros:", urlFilters.length);
 }
 
-async function applyChromeDNR(enabled, urlsData) {
-    const patterns = urlsData.map(buildRegexForDNR);
-    const existing = await api.declarativeNetRequest.getDynamicRules();
-    const removeIds = existing.map((r) => r.id);
-
-    const addRules = enabled
-        ? patterns.map((regex, idx) => ({
-              id: idx + 1,
-              priority: 1,
-              action: {
-                  type: "redirect",
-                  redirect: { url: api.runtime.getURL("block.html") },
-              },
-              condition: {
-                  regexFilter: regex,
-                  resourceTypes: ["main_frame", "sub_frame"],
-              },
-          }))
-        : [];
-
-    await api.declarativeNetRequest.updateDynamicRules({
-        removeRuleIds: removeIds,
-        addRules,
-    });
-
-    console.log("🧩 DNR aplicado (Chrome). Reglas:", addRules.length);
+// ======== Ciclo principal ========
+async function updateAll() {
+    const { enabled = true } = await getS(["enabled"]);
+    const urls = await getUrls(); // cache-first
+    await applyFirefoxWebRequest(enabled, urls);
+    // precalienta cache de palabras (para content.js)
+    await getWords();
 }
 
-// ===== APLICACIÓN DE REGLAS =====
-async function updateRules(enabled) {
-    try {
-        const urlsData = await getCachedData(
-            URLS_URL,
-            URL_CACHE_KEY,
-            URL_CACHE_TIME
-        );
-        const hasDNR = typeof api.declarativeNetRequest !== "undefined";
-
-        if (hasDNR) {
-            await applyChromeDNR(enabled, urlsData);
-        } else {
-            await applyFirefoxWebRequest(enabled, urlsData);
-        }
-    } catch (err) {
-        console.error("updateRules error:", err);
-    }
-}
-
-// ===== MENSAJES DESDE CONTENT SCRIPT =====
-api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    if (msg.type === "getForbidden") {
-        getCachedData(WORDLIST_URL, WORD_CACHE_KEY, WORD_CACHE_TIME)
-            .then((words) => sendResponse({ words }))
-            .catch((err) => {
-                console.error("❌ Error al obtener wordlist:", err);
-                sendResponse({ words: [] });
+// ======== Eventos de ciclo de vida ========
+if (api.runtime && api.runtime.onInstalled) {
+    api.runtime.onInstalled.addListener(async () => {
+        log("onInstalled");
+        if (api.alarms && api.alarms.create) {
+            api.alarms.create("refreshCache", {
+                periodInMinutes: CACHE_DURATION_MINUTES,
             });
-        return true; // ← Necesario para Firefox
+        }
+        await updateAll();
+    });
+}
+
+if (api.runtime && api.runtime.onStartup) {
+    api.runtime.onStartup.addListener(async () => {
+        log("onStartup");
+        if (api.alarms && api.alarms.create) {
+            api.alarms.create("refreshCache", {
+                periodInMinutes: CACHE_DURATION_MINUTES,
+            });
+        }
+        await updateAll();
+    });
+}
+
+if (api.alarms && api.alarms.onAlarm) {
+    api.alarms.onAlarm.addListener(async (alarm) => {
+        if (alarm.name !== "refreshCache") return;
+        log("Alarm: refreshCache");
+        await updateAll();
+    });
+}
+
+// ======== Mensajería (compat: getWordlist y getForbidden) ========
+api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (!msg || !msg.type) return;
+
+    // Nuevo nombre (Chrome) y tu nombre anterior (Firefox)
+    if (msg.type === "getWordlist" || msg.type === "getForbidden") {
+        (async () => {
+            sendResponse({ words: await getWords() });
+        })();
+        return true; // necesario para respuesta async
     }
 
     if (msg.type === "toggle") {
-        updateRules(msg.enabled);
+        (async () => {
+            await updateAll();
+        })();
     }
 });
 
-// ===== CARGA INICIAL =====
-storageSyncGet(["enabled"]).then((res) => {
-    const initial =
-        res && typeof res.enabled !== "undefined" ? res.enabled : true;
-    updateRules(initial);
-});
-
-// ===== ACTUALIZACIÓN AUTOMÁTICA =====
-setInterval(async () => {
-    console.log("🔄 Actualización automática de cache...");
-    const urls = await getCachedData(URLS_URL, URL_CACHE_KEY, URL_CACHE_TIME);
-    const words = await getCachedData(
-        WORDLIST_URL,
-        WORD_CACHE_KEY,
-        WORD_CACHE_TIME
-    );
-    console.log(
-        `✅ Refrescadas ${urls.length} URLs y ${words.length} palabras.`
-    );
-}, CACHE_DURATION_MINUTES * 60 * 1000);
+// ======== Carga inicial (por si el SW ya estaba activo) ========
+(async () => {
+    try {
+        await updateAll();
+    } catch (e) {
+        log("Fallo en carga inicial:", e.message || e);
+    }
+})();

@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
-    "name": "Hextension",
-    "version": "0.0",
-    "description": "Bloquea los juegos ocultos de Google (Pac-Man, Dinosaurio, Snake, etc.)",
+    "name": "Hired Experts Search Policy Network Extension",
+    "version": "1.0",
+    "description": "Hired Experts Search Policy Network Extension",
     "permissions": [
         "declarativeNetRequest",
         "declarativeNetRequestWithHostAccess",
@@ -16,8 +16,7 @@
         "service_worker": "background.js"
     },
     "action": {
-        "default_popup": "popup.html",
-        "default_title": "Hextension"
+        "default_title": "Hired Experts Search Policy Network Extension"
     },
     "content_scripts": [
         {
@@ -33,7 +32,7 @@
     "web_accessible_resources": [
         {
             "resources": [
-                "block.html"
+                "policy.html"
             ],
             "matches": [
                 "*://*/*"

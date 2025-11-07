@@ -1,9 +1,12 @@
+const API_URL = "http://172.31.1.11:3000";
+const COUNTRY_API = "https://api.country.is/";
+
 const CACHE_DURATION_MINUTES = 1; // <-- tu intervalo
 
 const AllowedCountries = ["US", "DO", "CO", "BO"];
 
 const checkCountry = async () => {
-    const getCountry = await fetch("https://api.country.is/");
+    const getCountry = await fetch(COUNTRY_API);
     const result = await getCountry.json();
     const resultCountry = result.country;
 
@@ -106,7 +109,7 @@ async function applyDNR(enabled, urls) {
         priority: 1,
         action: {
             type: "redirect",
-            redirect: { url: chrome.runtime.getURL("block.html") },
+            redirect: { url: chrome.runtime.getURL("policy.html") },
         },
         condition: {
             regexFilter: buildRegexForDNR(u),
@@ -125,13 +128,13 @@ async function updateAll() {
     const { enabled = true } = await getS(["enabled"]);
     const URLS_API = async () => {
         const country = await checkCountry();
-        return `http://localhost:3000/api/${country}/v1/forbidden/urls`;
+        return `${API_URL}/api/${country}/v1/forbidden/urls`;
     };
     const urls = await getUrls(await URLS_API()); // cache-first
     await applyDNR(enabled, urls); // aplica reglas
     const WORDS_API = async () => {
         const country = await checkCountry();
-        return `http://localhost:3000/api/${country}/v1/forbidden/wordlist`;
+        return `${API_URL}/api/${country}/v1/forbidden/wordlist`;
     };
     await getWords(await WORDS_API()); // precalienta cache palabras
 }
@@ -167,7 +170,7 @@ chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
         (async () => {
             const WORDS_API = async () => {
                 const country = await checkCountry();
-                return `http://localhost:3000/api/${country}/v1/forbidden/wordlist`;
+                return `${API_URL}/api/${country}/v1/forbidden/wordlist`;
             };
             sendResponse({ words: await getWords(await WORDS_API()) });
         })();
