@@ -1,35 +1,24 @@
 {
-    "manifest_version": 3,
+    "manifest_version": 2,
     "name": "Hired Experts Search Policy Network",
-    "version": "1.0",
-    "description": "Hired Experts Search Policy Network",
+    "version": "1.0.4",
+    "description": "Offline Policy Filter for Firefox",
     "browser_specific_settings": {
         "gecko": {
-            "id": "ydiazsx@hiredexperts.com",
-            "strict_min_version": "109.0",
-            "data_collection_permissions": {
-                "required": [
-                    "none"
-                ],
-                "optional": []
-            }
+            "id": "ydiaz@hiredexperts.com",
+            "strict_min_version": "109.0"
         }
     },
     "permissions": [
-        "declarativeNetRequest",
-        "declarativeNetRequestWithHostAccess",
-        "storage"
-    ],
-    "host_permissions": [
+        "webRequest",
+        "webRequestBlocking",
+        "storage",
         "<all_urls>"
     ],
     "background": {
         "scripts": [
             "background.js"
         ]
-    },
-    "action": {
-        "default_title": "Hired Experts Search Policy Network"
     },
     "content_scripts": [
         {
@@ -43,14 +32,9 @@
         }
     ],
     "web_accessible_resources": [
-        {
-            "resources": [
-                "privacy.html"
-            ],
-            "matches": [
-                "*://*/*"
-            ],
-            "extension_ids": []
-        }
+        "privacy.html",
+        "privacy.css",
+        "data/words.txt",
+        "data/urls.txt"
     ]
 }

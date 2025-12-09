@@ -6,12 +6,11 @@ const RenderHTML = (word) => {
 <html lang="en">
 
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Access Blocked</title>
-    <style>
-    
-body {
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Blocked</title>
+<style>
+    body {
     font-family: Arial, sans-serif;
     background: #f4f4f4;
     margin: 0;
@@ -29,7 +28,7 @@ body {
     margin: 0 auto;
     padding: 30px 35px;
     border-radius: 6px;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
     color: #333;
 }
 
@@ -97,97 +96,84 @@ body {
     color: #004999;
     border-bottom: 1px solid #004999;
 }
+
 </style>
 </head>
 
 <body>
-
-    <div class="card">
-        <div class="header">
-            <h1 class="brand">Hired Experts Search Policy Network</h1>
-        </div>
-
-        <h2 class="title">Intrusion Prevention - Access Blocked</h2>
-
-        <p class="message">Access denied — This action was blocked by the Cybersecurity Team.</p>
-        <p class="message">
-            You have tried to search a web page that is not allowed by your Internet usage policy.
-        </p>
-        <p class="message">All activity is monitored for security compliance.</p>
-
-        <div class="info-box">
-            <p>Searched for: <span> ${word}</span></p>
-        </div>
-
-        <p class="footer-text">
-            If you believe this is an error, contact: <span>cybersecurity@hiredexpertsdr.com</span>
-        </p>
+<div class="card">
+    <div class="header">
+        <h1 class="brand">${EXTENSION_NAME}</h1>
     </div>
 
+    <h2 class="title">Intrusion Prevention - Access Blocked</h2>
+
+    <p class="message">
+        Restricted keyword detected: <strong>${word}</strong>
+    </p>
+
+    <div class="info-box">
+        <p>Security Policy Enforcement</p>
+    </div>
+
+    <p class="footer-text">
+        Contact: <span>cybersecurity@hiredexpertsdr.com</span>
+    </p>
+</div>
 </body>
 
 </html>
-    `;
+`;
 };
 
-browser.storage.sync.get("enabled").then((res) => {
-    const enabled = res.enabled ?? true;
-    if (!enabled) return; // Si está apagado, no toques nada
+browser.storage.sync.get("enabled").then(async (res) => {
+    if (res.enabled === false) return;
 
-    browser.runtime
-        .sendMessage({ type: "getForbidden" })
-        .then((data) => {
-            let textToCheck = "";
+    // Use cached list first, then ask the background if needed
+    let forbiddenWords = [];
+    try {
+        const cached = await browser.storage.local.get("cachedWords");
+        if (Array.isArray(cached.cachedWords)) {
+            forbiddenWords = cached.cachedWords;
+        }
+    } catch (e) {}
 
-            // selecciona inputs relevantes y textareas visibles
-            const inputSelectors = ["input", "textarea"];
-            const fields = Array.from(
-                document.querySelectorAll(inputSelectors.join(","))
-            );
+    if (!forbiddenWords.length) {
+        try {
+            const data = await browser.runtime.sendMessage({
+                type: "getForbidden",
+            });
+            forbiddenWords = data.words || [];
+        } catch (e) {
+            forbiddenWords = [];
+        }
+    }
 
-            // concatena valores (prioriza values actuales)
-            for (const field of fields) {
-                try {
-                    const v = field.value || field.getAttribute("value") || "";
-                    if (v && typeof v === "string")
-                        textToCheck += " " + v.toLowerCase();
-                } catch (e) {
-                    // ignorar elementos extraños
-                }
-            }
+    let text = "";
 
-            // si no hay texto en inputs/textarea, revisa body
-            if (!textToCheck.trim()) {
-                textToCheck = (
-                    (document.body &&
-                        (document.body.innerText ||
-                            document.body.textContent)) ||
-                    ""
-                ).toLowerCase();
-            }
+    const fields = document.querySelectorAll("input, textarea");
 
-            if (!textToCheck) return; // nothing to check
+    for (const f of fields) {
+        const v = f.value || f.getAttribute("value") || "";
+        if (v && typeof v === "string") text += " " + v.toLowerCase();
+    }
 
-            // ----------------------
-            // 5) check words (use word boundaries-ish)
-            // ----------------------
-            for (const w of data.words) {
-                if (!w) continue;
-                // escape special regex chars
-                const esc = String(w).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-                const re = new RegExp(`(?:^|\\s)${esc}(?:$|\\s)`, "i");
-                if (re.test(textToCheck)) {
-                    // found a forbidden word -> replace whole body with block page
-                    try {
-                        document.title = EXTENSION_NAME;
-                        document.documentElement.innerHTML = RenderHTML(w);
-                    } catch (e) {
-                        // fallback: replace body only
-                        document.body.innerHTML = RenderHTML(w);
-                    }
-                    break;
-                }
-            }
-        })
-        .catch(console.error);
+    if (!text.trim()) {
+        text = (
+            document.body.innerText ||
+            document.body.textContent ||
+            ""
+        ).toLowerCase();
+    }
+
+    for (const w of forbiddenWords) {
+        const esc = w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const re = new RegExp(`(?:^|\\s)${esc}(?:$|\\s)`, "i");
+
+        if (re.test(text)) {
+            document.title = EXTENSION_NAME;
+            document.documentElement.innerHTML = RenderHTML(w);
+            break;
+        }
+    }
 });

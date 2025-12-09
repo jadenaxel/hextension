@@ -1,246 +1,204 @@
-// ============================
-// Hired Experts Policy Network (Firefox)
-// Requests por país + cache-first + alarms
-// ============================
-
 const api = typeof browser !== "undefined" ? browser : chrome;
-
-const API_URL = "http://172.31.1.11:3000";
-const COUNTRY_API = "https://api.country.is/";
-const CACHE_DURATION_MINUTES = 1;
-
-// Países permitidos; si el API devuelve otro, se usa "US" como fallback
-const AllowedCountries = ["US", "DO", "CO", "BO"];
-
-// ======== Helpers de tiempo/cache ========
-const now = () => Date.now();
-const ms = (m) => m * 60 * 1000;
-const fresh = (t, m = CACHE_DURATION_MINUTES) =>
-    Boolean(t) && now() - t < ms(m);
 const log = (...a) => console.log("[BG]", ...a);
 
-// ======== Storage promisificado ========
-const getL = (k) =>
-    api.storage.local.get.length === 1
-        ? api.storage.local.get(k)
-        : new Promise((r) => api.storage.local.get(k, r));
+const API_BASE = "http://localhost:3000/api";
+const COUNTRY_ENDPOINT = "https://api.country.is/";
+const REFRESH_MS = 5 * 60 * 1000;
+const STORAGE_KEYS = {
+    words: "cachedWords",
+    urls: "cachedUrls",
+    country: "cachedCountry",
+    lastUpdated: "cachedLastUpdated",
+};
 
-const setL = (o) =>
-    api.storage.local.set.length === 1
-        ? api.storage.local.set(o)
-        : new Promise((r) => api.storage.local.set(o, r));
+function toNormalizedList(payload) {
+    if (Array.isArray(payload)) {
+        return Array.from(
+            new Set(
+                payload
+                    .map((v) => (v == null ? "" : String(v).trim()))
+                    .filter((v) => v && !v.startsWith("#"))
+            )
+        );
+    }
 
-const getS = (k) =>
-    api.storage.sync.get.length === 1
-        ? api.storage.sync.get(k)
-        : new Promise((r) => api.storage.sync.get(k, r));
+    if (payload && Array.isArray(payload.data)) return toNormalizedList(payload.data);
+    if (payload && Array.isArray(payload.list)) return toNormalizedList(payload.list);
 
-// ======== Claves de cache ========
-const URL_CACHE_KEY = "forbiddenUrlsCache";
-const URL_CACHE_TIME = "forbiddenUrlsTimestamp";
-const WORD_CACHE_KEY = "forbiddenWordlist";
-const WORD_CACHE_TIME = "forbiddenWordlistTimestamp";
+    if (typeof payload === "string") {
+        return toNormalizedList(payload.split(/\r?\n/));
+    }
 
-// ======== País (para construir endpoints v1 por país) ========
-async function checkCountry() {
+    return [];
+}
+
+async function getCountryCode() {
     try {
-        const res = await fetch(COUNTRY_API, { cache: "no-store" });
-        if (!res.ok) throw new Error(String(res.status));
+        const cached = await api.storage.local.get(STORAGE_KEYS.country);
+        if (cached?.[STORAGE_KEYS.country]) {
+            return String(cached[STORAGE_KEYS.country]).toUpperCase();
+        }
+
+        const res = await fetch(COUNTRY_ENDPOINT);
         const data = await res.json();
-        const c = (data && data.country) || "US";
-        return AllowedCountries.includes(c) ? c : "US";
+        const country = String(data?.country || "US").toUpperCase();
+
+        await api.storage.local.set({ [STORAGE_KEYS.country]: country });
+        return country;
     } catch (e) {
-        log("No se pudo detectar país, usando US. Motivo:", e.message || e);
+        log("Geolocation failed, using US", e);
         return "US";
     }
 }
 
-// ======== Transformador de URLs a patrón webRequest (Firefox) ========
-function toUrlFilterPattern(input) {
-    let raw = (input || "").trim();
-    if (!raw) return "*://*/*";
-    if (!/^https?:\/\//i.test(raw)) raw = "https://" + raw;
+async function fetchList(kind, country) {
+    const url = `${API_BASE}/${country}/v1/${kind}`;
+    const res = await fetch(url);
+
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+
+    const text = await res.text();
+    let parsed = text;
 
     try {
-        const u = new URL(raw);
-        const baseHost = u.hostname.replace(/^www\./i, "");
-        const hostPart = baseHost.includes("*") ? baseHost : `*.${baseHost}`;
-        let pathPart = u.pathname || "/";
-        pathPart = pathPart.replace(/\/+$/, "");
-        if (pathPart === "") pathPart = "/";
-        if (!pathPart.endsWith("/*")) pathPart += "/*";
-        return `*://${hostPart}${pathPart}`;
-    } catch {
-        const host = input
-            .replace(/^https?:\/\//i, "")
-            .replace(/\/.*$/, "")
-            .replace(/^www\./i, "");
+        parsed = JSON.parse(text);
+    } catch (e) {}
+
+    return toNormalizedList(parsed);
+}
+
+async function getCachedData() {
+    const data = await api.storage.local.get([
+        STORAGE_KEYS.words,
+        STORAGE_KEYS.urls,
+    ]);
+
+    return {
+        words: toNormalizedList(data[STORAGE_KEYS.words] || []),
+        urls: toNormalizedList(data[STORAGE_KEYS.urls] || []),
+    };
+}
+
+async function persistData({ words, urls, country }) {
+    await api.storage.local.set({
+        [STORAGE_KEYS.words]: toNormalizedList(words),
+        [STORAGE_KEYS.urls]: toNormalizedList(urls),
+        [STORAGE_KEYS.country]: country,
+        [STORAGE_KEYS.lastUpdated]: Date.now(),
+    });
+}
+
+async function refreshFromApi() {
+    try {
+        const country = await getCountryCode();
+        const [urls, words] = await Promise.all([
+            fetchList("urllist", country),
+            fetchList("wordlist", country),
+        ]);
+
+        await persistData({ words, urls, country });
+        return { urls, words };
+    } catch (e) {
+        log("API request failed, falling back to cache", e);
+        return null;
+    }
+}
+
+function toPattern(url) {
+    let clean = String(url || "").trim();
+    if (!clean) return "*://*/*";
+
+    if (!/^https?:\/\//i.test(clean)) clean = "https://" + clean;
+
+    try {
+        const u = new URL(clean);
+        const host = u.hostname.replace(/^www\./, "");
+        return `*://*.${host}/*`;
+    } catch (e) {
+        const host = clean.replace(/^https?:\/\//, "").split("/")[0];
         return `*://*.${host}/*`;
     }
 }
 
-// ======== Cache-first: URLs prohibidas ========
-async function getUrls() {
-    const s = await getL([URL_CACHE_KEY, URL_CACHE_TIME]);
-    const cached = Array.isArray(s[URL_CACHE_KEY]) ? s[URL_CACHE_KEY] : [];
-    const ts = s[URL_CACHE_TIME] || 0;
+let listener = null;
 
-    if (cached.length && fresh(ts)) {
-        log("URLs desde cache:", cached.length);
-        return cached;
-    }
-
-    try {
-        const country = await checkCountry();
-        const res = await fetch(`${API_URL}/api/${country}/v1/forbidden/urls`, {
-            cache: "no-store",
-        });
-        if (!res.ok) throw new Error(`API URLs ${res.status}`);
-        const j = await res.json();
-        const urls = Array.isArray(j.urls) ? j.urls : [];
-        await setL({ [URL_CACHE_KEY]: urls, [URL_CACHE_TIME]: now() });
-        log("URLs refrescadas desde API:", urls.length);
-        return urls;
-    } catch (e) {
-        log("API URLs caída, uso cache. Motivo:", e.message || e);
-        return cached;
-    }
-}
-
-// ======== Cache-first: Wordlist ========
-async function getWords() {
-    const s = await getL([WORD_CACHE_KEY, WORD_CACHE_TIME]);
-    const cached = Array.isArray(s[WORD_CACHE_KEY]) ? s[WORD_CACHE_KEY] : [];
-    const ts = s[WORD_CACHE_TIME] || 0;
-
-    if (cached.length && fresh(ts)) {
-        log("Wordlist desde cache:", cached.length);
-        return cached;
-    }
-
-    try {
-        const country = await checkCountry();
-        const res = await fetch(
-            `${API_URL}/api/${country}/v1/forbidden/wordlist`,
-            {
-                cache: "no-store",
-            }
-        );
-        if (!res.ok) throw new Error(`API words ${res.status}`);
-        const j = await res.json();
-        const words = Array.isArray(j.words) ? j.words : [];
-        await setL({ [WORD_CACHE_KEY]: words, [WORD_CACHE_TIME]: now() });
-        log("Wordlist refrescada desde API:", words.length);
-        return words;
-    } catch (e) {
-        log("API words caída, uso cache. Motivo:", e.message || e);
-        return cached;
-    }
-}
-
-// ======== Bloqueo en Firefox con webRequest ========
-let ffRequestListener = null;
-
-async function applyFirefoxWebRequest(enabled, urlsData) {
-    // limpiar listener previo
-    if (ffRequestListener) {
+async function applyBlock(enabled, urls) {
+    if (listener) {
         try {
-            api.webRequest.onBeforeRequest.removeListener(ffRequestListener);
-        } catch {}
-        ffRequestListener = null;
+            api.webRequest.onBeforeRequest.removeListener(listener);
+        } catch (e) {}
+        listener = null;
     }
+
+    const sanitizedUrls = Array.from(
+        new Set((urls || []).map((u) => String(u || "").trim()).filter(Boolean))
+    );
 
     if (!enabled) {
-        log("Bloqueo desactivado (Firefox)");
+        log("Bloqueo desactivado");
         return;
     }
 
-    const urlFilters = urlsData.length
-        ? urlsData.map(toUrlFilterPattern)
-        : ["*://*/*"];
+    const patterns = sanitizedUrls.map(toPattern);
 
-    ffRequestListener = () => ({
+    listener = () => ({
         redirectUrl: api.runtime.getURL("privacy.html"),
     });
 
     api.webRequest.onBeforeRequest.addListener(
-        ffRequestListener,
-        {
-            urls: urlFilters,
-            types: ["main_frame"],
-        },
+        listener,
+        { urls: patterns, types: ["main_frame", "sub_frame"] },
         ["blocking"]
     );
 
-    log("webRequest activo (Firefox). Filtros:", urlFilters.length);
+    log("Bloqueo activo con", patterns.length, "patrones");
 }
 
-// ======== Ciclo principal ========
+async function applyFromCache(enabled) {
+    const { urls } = await getCachedData();
+    await applyBlock(enabled, urls);
+    log("Bloqueo aplicado desde cache", urls.length);
+}
+
+async function refreshAndApply(enabled) {
+    const latest = await refreshFromApi();
+
+    if (latest && latest.urls) {
+        await applyBlock(enabled, latest.urls);
+        log("Bloqueo actualizado desde API", latest.urls.length);
+        return;
+    }
+
+    const { urls } = await getCachedData();
+    await applyBlock(enabled, urls);
+}
+
 async function updateAll() {
-    const { enabled = true } = await getS(["enabled"]);
-    const urls = await getUrls(); // cache-first
-    await applyFirefoxWebRequest(enabled, urls);
-    // precalienta cache de palabras (para content.js)
-    await getWords();
+    const { enabled = true } = await api.storage.sync.get("enabled");
+    await applyFromCache(enabled);
+    await refreshAndApply(enabled);
 }
 
-// ======== Eventos de ciclo de vida ========
-if (api.runtime && api.runtime.onInstalled) {
-    api.runtime.onInstalled.addListener(async () => {
-        log("onInstalled");
-        if (api.alarms && api.alarms.create) {
-            api.alarms.create("refreshCache", {
-                periodInMinutes: CACHE_DURATION_MINUTES,
-            });
-        }
-        await updateAll();
-    });
-}
+api.runtime.onInstalled.addListener(updateAll);
+api.runtime.onStartup.addListener(updateAll);
 
-if (api.runtime && api.runtime.onStartup) {
-    api.runtime.onStartup.addListener(async () => {
-        log("onStartup");
-        if (api.alarms && api.alarms.create) {
-            api.alarms.create("refreshCache", {
-                periodInMinutes: CACHE_DURATION_MINUTES,
-            });
-        }
-        await updateAll();
-    });
-}
+setInterval(async () => {
+    const { enabled = true } = await api.storage.sync.get("enabled");
+    await refreshAndApply(enabled);
+}, REFRESH_MS);
 
-if (api.alarms && api.alarms.onAlarm) {
-    api.alarms.onAlarm.addListener(async (alarm) => {
-        if (alarm.name !== "refreshCache") return;
-        log("Alarm: refreshCache");
-        await updateAll();
-    });
-}
-
-// ======== Mensajería (compat: getWordlist y getForbidden) ========
-api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+api.runtime.onMessage.addListener((msg, _s, send) => {
     if (!msg || !msg.type) return;
 
-    // Nuevo nombre (Chrome) y tu nombre anterior (Firefox)
-    if (msg.type === "getWordlist" || msg.type === "getForbidden") {
+    if (msg.type === "getForbidden") {
         (async () => {
-            sendResponse({ words: await getWords() });
+            const { words } = await getCachedData();
+            send({ words });
         })();
-        return true; // necesario para respuesta async
+        return true;
     }
 
     if (msg.type === "toggle") {
-        (async () => {
-            await updateAll();
-        })();
+        updateAll();
     }
 });
-
-// ======== Carga inicial (por si el SW ya estaba activo) ========
-(async () => {
-    try {
-        await updateAll();
-    } catch (e) {
-        log("Fallo en carga inicial:", e.message || e);
-    }
-})();

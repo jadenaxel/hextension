@@ -1,23 +1,22 @@
 {
-    "manifest_version": 3,
+    "manifest_version": 2,
     "name": "Hired Experts Search Policy Network",
     "version": "1.0.3",
     "description": "Offline Policy Filter",
     "permissions": [
-        "declarativeNetRequest",
-        "declarativeNetRequestWithHostAccess",
         "webRequest",
         "webRequestBlocking",
         "storage",
-        "alarms"
-    ],
-    "host_permissions": [
+        "alarms",
         "<all_urls>"
     ],
     "background": {
-        "service_worker": "background.js"
+        "scripts": [
+            "background.js"
+        ],
+        "persistent": true
     },
-    "action": {
+    "browser_action": {
         "default_title": "Hired Experts Search Policy Network"
     },
     "content_scripts": [
@@ -32,16 +31,15 @@
         }
     ],
     "web_accessible_resources": [
-        {
-            "resources": [
-                "policy.html"
-            ],
-            "matches": [
-                "*://*/*"
-            ]
-        }
+        "policy.html"
     ],
     "browser_specific_settings": {
+        "gecko": {
+            "id": "hiredexperts@hiredexpertsdr.com",
+            "strict_min_version": "109.0"
+        }
+    },
+    "applications": {
         "gecko": {
             "id": "hiredexperts@hiredexpertsdr.com",
             "strict_min_version": "109.0"

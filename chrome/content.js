@@ -1,4 +1,57 @@
+const api = typeof browser !== "undefined" ? browser : chrome;
+const runtime = api.runtime;
 const EXTENSION_NAME = "Hired Experts Search Policy Network";
+const SEARCH_HOST_PATTERNS = [
+    /\.google\./i,
+    /\.bing\.com$/i,
+    /\.search\.yahoo\.com$/i,
+    /\.duckduckgo\.com$/i,
+    /\.baidu\.com$/i,
+];
+
+function getSearchQuery() {
+    const params = new URLSearchParams(
+        window.location.search || window.location.hash.split("?")[1] || ""
+    );
+    const candidates = [
+        params.get("q"),
+        params.get("p"),
+        params.get("query"),
+        params.get("text"),
+    ].filter(Boolean);
+
+    if (candidates.length) return candidates[0];
+
+    const inputs = Array.from(
+        document.querySelectorAll("input[name=q], input[name=p], input[name=query], input[name=text]")
+    );
+    for (const el of inputs) {
+        if (el && typeof el.value === "string" && el.value.trim()) {
+            return el.value;
+        }
+    }
+    return "";
+}
+
+function sendMessageCompat(payload) {
+    return new Promise((resolve, reject) => {
+        try {
+            const maybePromise = runtime.sendMessage(
+                payload,
+                (resp) => {
+                    if (runtime.lastError) return reject(runtime.lastError);
+                    resolve(resp);
+                }
+            );
+
+            if (maybePromise && typeof maybePromise.then === "function") {
+                maybePromise.then(resolve).catch(reject);
+            }
+        } catch (e) {
+            reject(e);
+        }
+    });
+}
 
 const RenderMessagePage = (word) => {
     return `
@@ -8,8 +61,7 @@ const RenderMessagePage = (word) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-    
+<style>
 body {
     font-family: Arial, sans-serif;
     background: #f4f4f4;
@@ -82,20 +134,6 @@ body {
     font-weight: bold;
 }
 
-.review-link {
-    display: inline-block;
-    margin-top: 10px;
-    font-size: 14px;
-    text-decoration: none;
-    color: #0066cc;
-    border-bottom: 1px solid transparent;
-    transition: 0.2s ease-in-out;
-}
-
-.review-link:hover {
-    color: #004999;
-    border-bottom: 1px solid #004999;
-}
 </style>
 </head>
 
@@ -108,140 +146,63 @@ body {
 
         <h2 class="title">Intrusion Prevention - Access Blocked</h2>
 
-        <p class="message">Access denied — This action was blocked by the Cybersecurity Team.</p>
-        <p class="message">
-            You have tried to search a web page that is not allowed by your Internet usage policy.
-        </p>
-        <p class="message">All activity is monitored for security compliance.</p>
+        <p class="message">Access denied — Restricted word detected.</p>
 
         <div class="info-box">
-            <p>Searched for: <span> ${word}</span></p>
+            <p>Detected: <span>${word}</span></p>
         </div>
 
-        <p class="footer-text">
-            If you believe this is an error, contact: <span>cybersecurity@hiredexpertsdr.com</span>
-        </p>
+        <p class="footer-text">If you believe this is an error, contact: <span>cybersecurity@hiredexpertsdr.com</span></p>
     </div>
 
 </body>
-
 </html>
     `;
 };
 
 (async function main() {
-    // 1) check if extension enabled
-    const enabledRes = await new Promise((res) =>
-        chrome.storage.sync.get(["enabled"], res)
-    );
-    const enabled =
-        typeof enabledRes.enabled === "undefined"
-            ? true
-            : Boolean(enabledRes.enabled);
-    if (!enabled) return; // user turned it off
+    const host = location.hostname;
+    const isSearchHost = SEARCH_HOST_PATTERNS.some((re) => re.test(host));
+    if (!isSearchHost) return;
 
-    const CACHE_KEY = "forbiddenWordsCache";
-    const CACHE_TIME_KEY = "forbiddenWordsTimestamp";
-    const now = Date.now();
+    const queryText = getSearchQuery();
+    const isSearchPage =
+        /search/i.test(location.pathname) || Boolean(queryText);
+    if (!isSearchPage) return;
 
-    // 2) try to read cached words from localStorage (per-page) first (fast)
+    const enabledRes = await api.storage.sync.get(["enabled"]);
+    const enabled = enabledRes.enabled ?? true;
+    if (!enabled) return;
+
+    // Use cached list first, then ask the background if empty
     let forbiddenWords = [];
     try {
-        const local = localStorage.getItem(CACHE_KEY);
-        const localTs = Number(localStorage.getItem(CACHE_TIME_KEY) || 0);
-        if (local && localTs && now - localTs < 5 * 60 * 1000) {
-            // short local fallback freshness
-            forbiddenWords = JSON.parse(local);
-            // continue with this list (but still okay if empty)
+        const cached = await api.storage.local.get("cachedWords");
+        if (Array.isArray(cached.cachedWords)) {
+            forbiddenWords = cached.cachedWords;
         }
-    } catch (e) {
-        forbiddenWords = [];
-    }
+    } catch (e) {}
 
-    // 3) If empty or stale, request background for authoritative list (cache-first there)
-    if (!forbiddenWords || forbiddenWords.length === 0) {
+    if (!forbiddenWords.length) {
         try {
-            const data = await new Promise((resolve, reject) => {
-                chrome.runtime.sendMessage({ type: "getWordlist" }, (resp) => {
-                    if (chrome.runtime.lastError) {
-                        return reject(chrome.runtime.lastError);
-                    }
-                    resolve(resp);
-                });
-            });
-            forbiddenWords = Array.isArray(data.words) ? data.words : [];
-            // store on page localStorage for faster subsequent checks on same page
-            try {
-                localStorage.setItem(CACHE_KEY, JSON.stringify(forbiddenWords));
-                localStorage.setItem(CACHE_TIME_KEY, now.toString());
-            } catch (e) {
-                // ignore storage errors (private mode, etc)
-            }
-        } catch (err) {
-            // background failed: try to use whatever localStorage had (even if stale)
-            try {
-                const fallback = localStorage.getItem(CACHE_KEY);
-                forbiddenWords = fallback ? JSON.parse(fallback) : [];
-            } catch (e) {
-                forbiddenWords = [];
-            }
-            console.warn(
-                "[content] ⚠️ No se pudo obtener wordlist desde background:",
-                err
-            );
-        }
-    }
+            const data = await sendMessageCompat({ type: "getWordlist" });
 
-    // ----------------------
-    // 4) Buscar texto en inputs/textarea y body
-    // ----------------------
-    let textToCheck = "";
-
-    // selecciona inputs relevantes y textareas visibles
-    const inputSelectors = ["input", "textarea"];
-    const fields = Array.from(
-        document.querySelectorAll(inputSelectors.join(","))
-    );
-
-    // concatena valores (prioriza values actuales)
-    for (const field of fields) {
-        try {
-            const v = field.value || field.getAttribute("value") || "";
-            if (v && typeof v === "string")
-                textToCheck += " " + v.toLowerCase();
+            forbiddenWords = Array.isArray(data?.words) ? data.words : [];
         } catch (e) {
-            // ignorar elementos extraños
+            forbiddenWords = [];
         }
     }
 
-    // si no hay texto en inputs/textarea, revisa body
-    if (!textToCheck.trim()) {
-        textToCheck = (
-            (document.body &&
-                (document.body.innerText || document.body.textContent)) ||
-            ""
-        ).toLowerCase();
-    }
+    const textToCheck = String(queryText || "").toLowerCase().slice(0, 512);
+    if (!textToCheck.trim()) return;
 
-    if (!textToCheck) return; // nothing to check
-
-    // ----------------------
-    // 5) check words (use word boundaries-ish)
-    // ----------------------
     for (const w of forbiddenWords) {
-        if (!w) continue;
-        // escape special regex chars
         const esc = String(w).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const re = new RegExp(`(?:^|\\s)${esc}(?:$|\\s)`, "i");
+
         if (re.test(textToCheck)) {
-            // found a forbidden word -> replace whole body with block page
-            try {
-                document.title = EXTENSION_NAME;
-                document.documentElement.innerHTML = RenderMessagePage(w);
-            } catch (e) {
-                // fallback: replace body only
-                document.body.innerHTML = RenderMessagePage(w);
-            }
+            document.title = EXTENSION_NAME;
+            document.documentElement.innerHTML = RenderMessagePage(w);
             break;
         }
     }
